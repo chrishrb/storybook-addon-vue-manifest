@@ -1,0 +1,72 @@
+{
+  "name": "storybook-addon-vue-manifest",
+  "version": "0.1.0",
+  "description": "Generate Storybook component manifests for Vue 3 projects using vue-component-meta — powers the Storybook MCP server with structured component docs",
+  "keywords": [
+    "storybook-addons",
+    "storybook",
+    "vue",
+    "vue3",
+    "docgen",
+    "manifest",
+    "mcp"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./preset": {
+      "types": "./dist/preset.d.ts",
+      "import": "./dist/preset.js",
+      "require": "./dist/preset.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/**/*",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "comment-parser": "^1.4.1",
+    "empathic": "^2.0.0",
+    "pathe": "^1.1.2",
+    "tsconfig-paths": "^4.2.0",
+    "vue-component-meta": "^3.3.4",
+    "vue-docgen-api": "^4.75.1"
+  },
+  "peerDependencies": {
+    "storybook": "^10.5.0-alpha.0 || ^10 || ^11"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "memfs": "^4.11.1",
+    "storybook": "next",
+    "ts-dedent": "^2.0.0",
+    "tsdown": "^0.15.7",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0",
+    "vue": "^3.5.13"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "storybook": {
+    "displayName": "Vue Component Manifest",
+    "supportedFrameworks": [
+      "vue3-vite"
+    ]
+  }
+}
