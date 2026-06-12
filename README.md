@@ -16,7 +16,7 @@ enabling AI-assisted workflows for Vue projects.
 ## Usage
 
 ```bash
-npm install --save-dev storybook-addon-vue-manifest
+npm install --save-dev @chrishrb/storybook-addon-vue-manifest
 ```
 
 ```ts
@@ -25,7 +25,7 @@ const config: StorybookConfig = {
   framework: '@storybook/vue3-vite',
   addons: [
     // ...
-    'storybook-addon-vue-manifest',
+    '@chrishrb/storybook-addon-vue-manifest',
   ],
   features: {
     // required: enables the manifest routes and build output in Storybook core
@@ -58,7 +58,7 @@ With `@storybook/addon-docs` installed, unattached MDX docs additionally produce
 ```ts
 addons: [
   {
-    name: 'storybook-addon-vue-manifest',
+    name: '@chrishrb/storybook-addon-vue-manifest',
     options: {
       // tsconfig used by the vue-component-meta checker (relative to the project root).
       // Defaults to the vue3-vite framework `docgen.tsconfig` option, then 'tsconfig.json'.
