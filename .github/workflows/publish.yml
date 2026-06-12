@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     # prevents this action from running on forks
-    if: github.repository == 'chrishrb/techradar'
+    if: github.repository == 'chrishrb/storybook-addon-vue-manifest'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
