@@ -1,5 +1,5 @@
 {
-  "name": "storybook-addon-vue-manifest",
+  "name": "@chrishrb/storybook-addon-vue-manifest",
   "version": "0.1.0",
   "description": "Generate Storybook component manifests for Vue 3 projects using vue-component-meta — powers the Storybook MCP server with structured component docs",
   "keywords": [
