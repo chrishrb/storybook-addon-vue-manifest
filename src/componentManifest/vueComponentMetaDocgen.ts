@@ -107,12 +107,20 @@ function flattenDocgenTags(tags: NonNullable<ComponentDoc['tags']>): Record<stri
 export async function extractComponentMeta(
   checker: VueComponentMetaChecker,
   absPath: string,
-  localName?: string
+  localName?: string,
+  preferredExportName?: string
 ): Promise<ExtractedComponentMeta | undefined> {
   const exportNames = checker.getExportNames(absPath);
-  const exportName = exportNames.includes('default')
-    ? 'default'
-    : exportNames.find((name) => name === localName);
+  // When the component was resolved through a barrel re-export, `preferredExportName` names the
+  // exact export within `absPath` (e.g. `default` for `export { default as X } from './X.vue'`)
+  // and takes precedence over the default-export heuristic.
+  const exportName =
+    (preferredExportName && exportNames.includes(preferredExportName)
+      ? preferredExportName
+      : undefined) ??
+    (exportNames.includes('default')
+      ? 'default'
+      : exportNames.find((name) => name === localName));
 
   if (!exportName) {
     return undefined;

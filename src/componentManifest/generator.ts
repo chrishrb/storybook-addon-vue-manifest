@@ -141,7 +141,14 @@ export const manifests: PresetPropertyFn<
             if (watch) {
               refreshFileIfChanged(checker, ref.absPath);
             }
-            componentMeta = (await extractComponentMeta(checker, ref.absPath, ref.localName))?.meta;
+            componentMeta = (
+              await extractComponentMeta(
+                checker,
+                ref.absPath,
+                ref.localName,
+                ref.componentExportName
+              )
+            )?.meta;
           } catch (e) {
             // The checker throws e.g. when the component file is not part of its TypeScript
             // program. Degrade to an error entry that still carries stories and import.
