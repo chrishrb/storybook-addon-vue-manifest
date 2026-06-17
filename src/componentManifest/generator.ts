@@ -13,7 +13,7 @@ import type {
 } from 'storybook/internal/types';
 
 import path from 'pathe';
-import type { ComponentMeta } from 'vue-component-meta';
+import type { ComponentMeta, PropertyMetaSchema } from 'vue-component-meta';
 
 import { type VueManifestAddonOptions, resolveTsconfigPath } from '../options.ts';
 import {
@@ -22,7 +22,11 @@ import {
   selectComponentEntriesByComponentId,
 } from './entries.ts';
 import { extractComponentDescription } from './extractComponentDescription.ts';
-import { generateVueSnippet, mergeArgsFromAst } from './generateCodeSnippet.ts';
+import {
+  extractRenderTemplate,
+  generateVueSnippet,
+  mergeArgsFromAst,
+} from './generateCodeSnippet.ts';
 import { buildComponentImport, getPackageInfo } from './getComponentImports.ts';
 import { type ResolvedComponentRef, resolveComponentRef } from './resolveComponent.ts';
 import {
@@ -33,10 +37,98 @@ import {
 import { extractJSDocInfo } from './jsdocTags.ts';
 import { cachedReadTextFileSync, invalidateCache, invariant } from './utils.ts';
 
+/**
+ * Subset of react-docgen-typescript's `ComponentDoc` props shape that the Storybook MCP server's
+ * markdown formatter understands. The server reads props from one of `reactDocgen`,
+ * `reactDocgenTypescript` or `reactComponentMeta` (in that order) and only ever accesses
+ * `type.raw ?? type.name`, `description`, `defaultValue.value` and `required` — so populating this
+ * field makes a Vue manifest render correctly in the otherwise React-only MCP server.
+ */
+interface ComponentDocLikeProps {
+  [propName: string]: {
+    description?: string;
+    type?: { name?: string; raw?: string };
+    defaultValue?: { value?: string };
+    required?: boolean;
+  };
+}
+
 /** Vue-specific extension of ComponentManifest with the raw vue-component-meta data attached. */
 export interface VueComponentManifest extends ComponentManifest {
   vueComponentMeta?: ComponentMeta;
+  /**
+   * React-MCP-compatible projection of {@link vueComponentMeta}'s props. Lets the upstream
+   * Storybook MCP server (which only knows how to parse react docgen formats) render Vue props
+   * without any changes on its side. See {@link toReactComponentMeta}.
+   */
+  reactComponentMeta?: { props: ComponentDocLikeProps };
   [key: string]: unknown;
+}
+
+/**
+ * Serializes a vue-component-meta {@link PropertyMetaSchema} into a TypeScript-like type string,
+ * expanding the resolved structure (union members, object shapes, array elements) rather than
+ * leaving an opaque alias name. Used for the `raw` type the MCP markdown formatter prefers, so a
+ * prop typed `IconConfig` renders as `{ name: string; size?: number }` instead of `IconConfig`.
+ * `node_modules` types stay opaque because the checker already leaves them as plain strings.
+ */
+function serializeSchema(schema: PropertyMetaSchema): string {
+  if (typeof schema === 'string') {
+    return schema;
+  }
+
+  switch (schema.kind) {
+    case 'enum':
+      // Optional/union types: a union of the resolved member schemas (recurse so object members
+      // expand too). Fall back to the flat type when no members were resolved.
+      return schema.schema?.length
+        ? schema.schema.map(serializeSchema).join(' | ')
+        : schema.type;
+    case 'array':
+      // `schema` holds the resolved element type(s); fall back to the flat `Foo[]` string.
+      return schema.schema?.length
+        ? `${schema.schema.map(serializeSchema).join(' | ')}[]`
+        : schema.type;
+    case 'object': {
+      const properties = schema.schema ? Object.values(schema.schema) : [];
+      return properties.length
+        ? `{ ${properties
+            .map((p) => `${p.name}${p.required ? '' : '?'}: ${serializeSchema(p.schema)}`)
+            .join('; ')} }`
+        : schema.type;
+    }
+    case 'event':
+      // Callback signatures are already well-formed in `type` (e.g. `(event: MouseEvent) => void`).
+      return schema.type;
+    default:
+      return (schema as { type?: string }).type ?? 'unknown';
+  }
+}
+
+/**
+ * Projects vue-component-meta props into the `ComponentDocLike` shape the Storybook MCP server's
+ * markdown formatter consumes. `name` keeps the declared type (an alias such as `IconConfig`),
+ * while `raw` carries the fully resolved schema — the formatter prefers `raw`, so MCP clients see
+ * the expanded structure.
+ */
+function toReactComponentMeta(componentMeta: ComponentMeta): { props: ComponentDocLikeProps } {
+  return {
+    props: Object.fromEntries(
+      componentMeta.props.map((prop) => [
+        prop.name,
+        {
+          description: prop.description || undefined,
+          // `schema` is absent for props the checker couldn't resolve — fall back to the flat type.
+          type: {
+            name: prop.type,
+            raw: prop.schema === undefined ? prop.type : serializeSchema(prop.schema),
+          },
+          defaultValue: prop.default === undefined ? undefined : { value: prop.default },
+          required: prop.required,
+        },
+      ])
+    ),
+  };
 }
 
 /** Extract stories from a parsed CSF file, generating Vue template snippets. */
@@ -58,13 +150,20 @@ function extractStories(
         const { tags = {}, description } = jsdocComment ? extractJSDocInfo(jsdocComment) : {};
         const finalDescription = (tags?.describe?.[0] || tags?.desc?.[0]) ?? description;
 
+        // A story-level `render` with a literal template is what actually renders, so prefer it
+        // over args-based generation. Falls back to args when the render has no extractable
+        // template (e.g. it only spreads `v-bind="args"`).
+        const renderTemplate = extractRenderTemplate(csf._storyAnnotations[storyExport]?.render);
+
         // Merge meta + story args from the AST and generate the Vue template snippet
         const args = mergeArgsFromAst(csf._metaNode, csf._storyAnnotations[storyExport]);
-        const snippet = generateVueSnippet(
-          Object.keys(args).length > 0 ? args : undefined,
-          componentMeta,
-          tagName
-        );
+        const snippet =
+          renderTemplate ??
+          generateVueSnippet(
+            Object.keys(args).length > 0 ? args : undefined,
+            componentMeta,
+            tagName
+          );
 
         return {
           id: story.id,
@@ -187,6 +286,7 @@ export const manifests: PresetPropertyFn<
           summary,
           jsDocTags,
           vueComponentMeta: componentMeta,
+          reactComponentMeta: componentMeta ? toReactComponentMeta(componentMeta) : undefined,
         };
 
         if (resolved.error) {

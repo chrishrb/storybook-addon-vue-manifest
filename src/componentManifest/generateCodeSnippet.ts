@@ -1,4 +1,4 @@
-import { types as t } from 'storybook/internal/babel';
+import { generate, types as t } from 'storybook/internal/babel';
 
 import type { ComponentMeta } from 'vue-component-meta';
 
@@ -98,6 +98,86 @@ export function mergeArgsFromAst(
   const storyRecord = storyArgs ? astObjectToRecord(storyArgs) : {};
 
   return { ...metaRecord, ...storyRecord };
+}
+
+/**
+ * Reduce a multi-line string to a clean snippet: strip leading/trailing blank lines and remove the
+ * common leading indentation shared by all non-empty lines. Mirrors what `ts-dedent` does for the
+ * literal templates authors write inside a story's `render` function.
+ */
+function dedentTemplate(value: string): string {
+  const lines = value.replace(/^\n+/, '').replace(/\s+$/, '').split('\n');
+  const indents = lines
+    .filter((line) => line.trim().length > 0)
+    .map((line) => line.match(/^[ \t]*/)?.[0].length ?? 0);
+  const minIndent = indents.length > 0 ? Math.min(...indents) : 0;
+  return lines.map((line) => line.slice(minIndent)).join('\n');
+}
+
+/** Stringify a TemplateLiteral, printing `${expr}` interpolations back to source. */
+function templateLiteralToString(node: t.TemplateLiteral): string {
+  let result = '';
+  node.quasis.forEach((quasi, i) => {
+    result += quasi.value.cooked ?? quasi.value.raw;
+    const expr = node.expressions[i];
+    if (expr) {
+      result += `\${${generate(expr).code}}`;
+    }
+  });
+  return result;
+}
+
+/**
+ * Find the ObjectExpression a render function returns, whether written as a concise arrow body
+ * (`() => ({ template })`) or a block body with a `return` statement.
+ */
+function getReturnedObject(
+  node: t.ArrowFunctionExpression | t.FunctionExpression
+): t.ObjectExpression | undefined {
+  if (t.isObjectExpression(node.body)) {
+    return node.body;
+  }
+  if (t.isBlockStatement(node.body)) {
+    for (const statement of node.body.body) {
+      if (t.isReturnStatement(statement) && t.isObjectExpression(statement.argument)) {
+        return statement.argument;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Extract the literal `template` string from a story-level `render` function node, e.g.
+ *
+ * ```ts
+ * render: () => ({ components: { Button }, template: `<Button>x</Button>` })
+ * ```
+ *
+ * Returns the dedented template when the render returns an object with a string/template-literal
+ * `template` property, otherwise undefined (the caller then falls back to args-based generation).
+ */
+export function extractRenderTemplate(node: t.Node | undefined): string | undefined {
+  if (!node || (!t.isArrowFunctionExpression(node) && !t.isFunctionExpression(node))) {
+    return undefined;
+  }
+
+  const returned = getReturnedObject(node);
+  const templateProp = returned?.properties.find(
+    (p): p is t.ObjectProperty => t.isObjectProperty(p) && keyOf(p) === 'template'
+  );
+  if (!templateProp) {
+    return undefined;
+  }
+
+  const value = templateProp.value;
+  if (t.isStringLiteral(value)) {
+    return dedentTemplate(value.value);
+  }
+  if (t.isTemplateLiteral(value)) {
+    return dedentTemplate(templateLiteralToString(value));
+  }
+  return undefined;
 }
 
 /** Classification of a single arg against the component's extracted meta. */

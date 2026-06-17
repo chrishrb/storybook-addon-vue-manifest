@@ -28,7 +28,20 @@ export const fsMocks = {
         export const Primary: Story = { args: { primary: true, label: 'Button' } };
         export const Secondary: Story = { args: { label: 'Button', default: 'Click me' } };
         export const WithCount: Story = { args: { label: 'Button', count: 3 } };
-        export const Hidden: Story = { args: { label: 'Hidden' } };`,
+        export const Hidden: Story = { args: { label: 'Hidden' } };
+
+        /** A story whose own render() defines a literal template */
+        export const AllVariants: Story = {
+          render: () => ({
+            components: { Button },
+            template: \`
+              <div style="display: flex; gap: 0.5rem;">
+                <Button primary label="primary" />
+                <Button label="secondary" />
+              </div>
+            \`,
+          }),
+        };`,
   ['./src/stories/Button.vue']: dedent`
         <script setup lang="ts">
         defineProps<{ label: string; primary?: boolean; count?: number }>();
@@ -65,7 +78,56 @@ export const fsMocks = {
 
 export const buttonComponentMeta = {
   type: 1,
-  props: [{ name: 'label' }, { name: 'primary' }, { name: 'count' }],
+  props: [
+    {
+      name: 'label',
+      type: 'string',
+      description: 'The button label',
+      required: true,
+      schema: 'string',
+    },
+    {
+      name: 'primary',
+      type: 'boolean | undefined',
+      description: 'Use the primary visual style',
+      default: 'false',
+      required: false,
+      schema: { kind: 'enum', type: 'boolean | undefined', schema: ['undefined', 'false', 'true'] },
+    },
+    {
+      name: 'count',
+      type: 'number | undefined',
+      required: false,
+      schema: { kind: 'enum', type: 'number | undefined', schema: ['undefined', 'number'] },
+    },
+    {
+      // Object alias: `type` stays the opaque name, `raw` expands the resolved schema.
+      name: 'icon',
+      type: 'IconConfig | undefined',
+      description: 'Optional leading icon',
+      required: false,
+      schema: {
+        kind: 'enum',
+        type: 'IconConfig | undefined',
+        schema: [
+          'undefined',
+          {
+            kind: 'object',
+            type: 'IconConfig',
+            schema: {
+              name: { name: 'name', type: 'string', required: true, schema: 'string' },
+              size: {
+                name: 'size',
+                type: 'number | undefined',
+                required: false,
+                schema: { kind: 'enum', type: 'number | undefined', schema: ['undefined', 'number'] },
+              },
+            },
+          },
+        ],
+      },
+    },
+  ],
   events: [{ name: 'click' }],
   slots: [{ name: 'default' }],
   exposed: [],
@@ -119,6 +181,17 @@ export const indexJson: { v: number; entries: Record<string, IndexEntry> } = {
       componentPath: './src/stories/Button.vue',
       tags: [Tag.DEV, Tag.TEST, Tag.AUTODOCS, Tag.MANIFEST],
       exportName: 'WithCount',
+    },
+    'example-button--all-variants': {
+      type: 'story',
+      subtype: 'story',
+      id: 'example-button--all-variants',
+      name: 'All Variants',
+      title: 'Example/Button',
+      importPath: './src/stories/Button.stories.ts',
+      componentPath: './src/stories/Button.vue',
+      tags: [Tag.DEV, Tag.TEST, Tag.AUTODOCS, Tag.MANIFEST],
+      exportName: 'AllVariants',
     },
     // No MANIFEST tag — must not show up in the manifest stories
     'example-button--hidden': {

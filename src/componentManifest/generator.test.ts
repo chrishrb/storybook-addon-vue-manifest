@@ -61,6 +61,48 @@ test('generates component manifest with snippets, import and description', async
       },
       "name": "Button",
       "path": "./src/stories/Button.stories.ts",
+      "reactComponentMeta": {
+        "props": {
+          "count": {
+            "defaultValue": undefined,
+            "description": undefined,
+            "required": false,
+            "type": {
+              "name": "number | undefined",
+              "raw": "undefined | number",
+            },
+          },
+          "icon": {
+            "defaultValue": undefined,
+            "description": "Optional leading icon",
+            "required": false,
+            "type": {
+              "name": "IconConfig | undefined",
+              "raw": "undefined | { name: string; size?: undefined | number }",
+            },
+          },
+          "label": {
+            "defaultValue": undefined,
+            "description": "The button label",
+            "required": true,
+            "type": {
+              "name": "string",
+              "raw": "string",
+            },
+          },
+          "primary": {
+            "defaultValue": {
+              "value": "false",
+            },
+            "description": "Use the primary visual style",
+            "required": false,
+            "type": {
+              "name": "boolean | undefined",
+              "raw": "undefined | false | true",
+            },
+          },
+        },
+      },
       "stories": [
         {
           "description": "The primary variant of the button",
@@ -83,6 +125,16 @@ test('generates component manifest with snippets, import and description', async
           "snippet": "<Button @click="onClick" label="Button" :count="3" />",
           "summary": undefined,
         },
+        {
+          "description": "A story whose own render() defines a literal template",
+          "id": "example-button--all-variants",
+          "name": "All Variants",
+          "snippet": "<div style="display: flex; gap: 0.5rem;">
+      <Button primary label="primary" />
+      <Button label="secondary" />
+    </div>",
+          "summary": undefined,
+        },
       ],
       "summary": "A simple button",
       "vueComponentMeta": {
@@ -94,13 +146,78 @@ test('generates component manifest with snippets, import and description', async
         "exposed": [],
         "props": [
           {
+            "description": "The button label",
             "name": "label",
+            "required": true,
+            "schema": "string",
+            "type": "string",
           },
           {
+            "default": "false",
+            "description": "Use the primary visual style",
             "name": "primary",
+            "required": false,
+            "schema": {
+              "kind": "enum",
+              "schema": [
+                "undefined",
+                "false",
+                "true",
+              ],
+              "type": "boolean | undefined",
+            },
+            "type": "boolean | undefined",
           },
           {
             "name": "count",
+            "required": false,
+            "schema": {
+              "kind": "enum",
+              "schema": [
+                "undefined",
+                "number",
+              ],
+              "type": "number | undefined",
+            },
+            "type": "number | undefined",
+          },
+          {
+            "description": "Optional leading icon",
+            "name": "icon",
+            "required": false,
+            "schema": {
+              "kind": "enum",
+              "schema": [
+                "undefined",
+                {
+                  "kind": "object",
+                  "schema": {
+                    "name": {
+                      "name": "name",
+                      "required": true,
+                      "schema": "string",
+                      "type": "string",
+                    },
+                    "size": {
+                      "name": "size",
+                      "required": false,
+                      "schema": {
+                        "kind": "enum",
+                        "schema": [
+                          "undefined",
+                          "number",
+                        ],
+                        "type": "number | undefined",
+                      },
+                      "type": "number | undefined",
+                    },
+                  },
+                  "type": "IconConfig",
+                },
+              ],
+              "type": "IconConfig | undefined",
+            },
+            "type": "IconConfig | undefined",
           },
         ],
         "slots": [
@@ -112,6 +229,21 @@ test('generates component manifest with snippets, import and description', async
       },
     }
   `);
+});
+
+test('uses the literal template from a story-level render() instead of <Component />', async () => {
+  const result = await runManifests(manifestEntries);
+  const story = result?.components?.components['example-button']?.stories.find(
+    (s) => s.id === 'example-button--all-variants'
+  );
+  expect(story?.snippet).toBe(
+    [
+      '<div style="display: flex; gap: 0.5rem;">',
+      '  <Button primary label="primary" />',
+      '  <Button label="secondary" />',
+      '</div>',
+    ].join('\n')
+  );
 });
 
 test('sets the docgen engine and duration in the manifest meta', async () => {
