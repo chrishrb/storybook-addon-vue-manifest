@@ -7,7 +7,6 @@ import {
   type VueComponentMetaChecker,
   createVueComponentMetaChecker,
   getFilenameWithoutExtension,
-  removeAllNestedSchemas,
 } from '../vueComponentMetaUtils.ts';
 
 /**
@@ -93,7 +92,7 @@ function flattenDocgenTags(tags: NonNullable<ComponentDoc['tags']>): Record<stri
     Object.entries(tags).map(([title, entries]) => [
       title,
       entries.map((entry) =>
-        String('description' in entry ? entry.description : (entry.content ?? ''))
+        String('content' in entry ? entry.content : (entry.description ?? ''))
       ),
     ])
   );
@@ -152,10 +151,6 @@ export async function extractComponentMeta(
       return description ? { ...event, description } : event;
     });
   }
-
-  // Nested schemas are unused by the manifest and can be enormous (e.g. HTMLElement) or circular,
-  // so they are stripped before the meta is serialized into the manifest JSON.
-  removeAllNestedSchemas(meta);
 
   const description =
     meta.description?.trim() ||

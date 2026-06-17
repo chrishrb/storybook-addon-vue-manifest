@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { createChecker } from 'vue-component-meta';
 
+import { ignoreNodeModuleTypes } from '../vueComponentMetaUtils.ts';
 import {
   extractComponentMeta,
   invalidateDocgenCache,
@@ -20,11 +21,14 @@ const BUTTON_PATH = join(FIXTURE_DIR, 'Button.vue');
 // Building the TypeScript program for the fixture project takes a few seconds.
 const TIMEOUT = 60_000;
 
+// Mirror the schema option used by the real checker (createVueComponentMetaChecker) so the fixture
+// resolves nested schemas the same way the addon does.
 const getFixtureChecker = () =>
   createChecker(join(FIXTURE_DIR, 'tsconfig.json'), {
     forceUseTs: true,
     noDeclarations: true,
     printer: { newLine: 1 },
+    schema: { ignore: [ignoreNodeModuleTypes] },
   });
 
 beforeEach(() => {
@@ -64,15 +68,35 @@ describe('extractComponentMeta', () => {
   );
 
   test(
-    'strips nested schemas to keep the manifest serializable',
+    'resolves project-owned types into structured schemas',
     async () => {
       const checker = getFixtureChecker();
       const result = await extractComponentMeta(checker, BUTTON_PATH);
 
-      // After stripping, the meta must be JSON-serializable without blowing up in size.
+      const size = result!.meta.props.find((prop) => prop.name === 'size');
+      // The string-literal union is expanded into its members rather than left as a flat string.
+      expect(size?.schema).toMatchObject({
+        kind: 'enum',
+        schema: expect.arrayContaining(['"small"', '"medium"', '"large"']),
+      });
+    },
+    TIMEOUT
+  );
+
+  test(
+    'keeps node_modules types opaque and stays serializable',
+    async () => {
+      const checker = getFixtureChecker();
+      const result = await extractComponentMeta(checker, BUTTON_PATH);
+
+      // The `click` event carries a `MouseEvent` payload. MouseEvent is declared in node_modules,
+      // so it must stay an opaque type string instead of expanding into hundreds of DOM props.
+      const click = result!.meta.events.find((event) => event.name === 'click');
+      expect(click?.schema).toEqual(['MouseEvent']);
+
+      // The meta must be JSON-serializable without blowing up in size.
       expect(() => JSON.stringify(result?.meta)).not.toThrow();
-      const serialized = JSON.stringify(result?.meta);
-      expect(serialized.length).toBeLessThan(100_000);
+      expect(JSON.stringify(result?.meta).length).toBeLessThan(100_000);
     },
     TIMEOUT
   );

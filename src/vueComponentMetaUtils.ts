@@ -6,13 +6,30 @@ import { getProjectRoot } from 'storybook/internal/common';
 import {
   type ComponentMeta,
   type MetaCheckerOptions,
-  type PropertyMetaSchema,
   createChecker,
   createCheckerByJson,
 } from 'vue-component-meta';
 import { parseMulti } from 'vue-docgen-api';
+import type * as ts from 'typescript';
 
 export type VueComponentMetaChecker = ReturnType<typeof createCheckerByJson>;
+
+/**
+ * `schema.ignore` predicate that leaves any type declared in `node_modules` unexpanded (kept as an
+ * opaque type string instead of a nested schema). This mirrors the default `propFilter` Storybook
+ * applies to react-docgen-typescript (`!/node_modules/.test(parent.fileName)`): it stops large or
+ * self-referential DOM/library types (`MouseEvent`, `HTMLElement`, …) from exploding the manifest
+ * while the project's own types are still fully resolved.
+ *
+ * Returns `undefined` (not `false`) for project-owned types so vue-component-meta keeps evaluating
+ * its remaining ignore rules — returning `false` would force-include the type and short-circuit.
+ */
+export function ignoreNodeModuleTypes(_name: string, type: ts.Type): boolean | undefined {
+  const declaration =
+    type.getSymbol()?.declarations?.[0] ?? type.aliasSymbol?.declarations?.[0];
+  const fileName = declaration?.getSourceFile().fileName;
+  return fileName?.includes('node_modules') ? true : undefined;
+}
 
 /**
  * Creates the `vue-component-meta` checker to use for extracting component meta/docs. Considers the
@@ -23,6 +40,10 @@ export async function createVueComponentMetaChecker(tsconfigPath = 'tsconfig.jso
     forceUseTs: true,
     noDeclarations: true,
     printer: { newLine: 1 },
+    // Resolve complex prop/event/slot/exposed types into structured schemas (unions, arrays,
+    // objects, callbacks) rather than flat type strings — without it vue-component-meta returns the
+    // bare type name for every type. node_modules types are kept opaque to bound the manifest size.
+    schema: { ignore: [ignoreNodeModuleTypes] },
   };
 
   const projectRoot = getProjectRoot();
@@ -135,35 +156,4 @@ async function getTsConfigReferences(tsConfigPath: string) {
     // invalid project tsconfig
     return [];
   }
-}
-
-/**
- * Removes any nested schemas from the given main schema (e.g. from a prop, event, slot or exposed).
- * Useful to drastically reduce build size and prevent out of memory issues when large schemas (e.g.
- * HTMLElement, MouseEvent) are used.
- */
-export function removeNestedSchemas(schema: PropertyMetaSchema) {
-  if (typeof schema !== 'object') {
-    return;
-  }
-  if (schema.kind === 'enum') {
-    // for enum types, we do not want to remove the schemas because otherwise the controls will be missing
-    // instead we remove the nested schemas for the enum entries to prevent out of memory errors for types like "HTMLElement | MouseEvent"
-    schema.schema?.forEach((enumSchema) => removeNestedSchemas(enumSchema));
-    return;
-  }
-  delete schema.schema;
-}
-
-/** Removes nested schemas from all props, events, slots and exposed entries of a ComponentMeta. */
-export function removeAllNestedSchemas(meta: ComponentMeta) {
-  (['props', 'events', 'slots', 'exposed'] as const).forEach((key) => {
-    meta[key].forEach((value) => {
-      if (Array.isArray(value.schema)) {
-        value.schema.forEach((eventSchema) => removeNestedSchemas(eventSchema));
-      } else {
-        removeNestedSchemas(value.schema);
-      }
-    });
-  });
 }

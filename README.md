@@ -90,13 +90,35 @@ addons: [
           "snippet": "<Button primary @click=\"onClick\" label=\"Button\" />"
         }
       ],
-      // raw vue-component-meta data (props/events/slots/exposed, schemas stripped)
+      // raw vue-component-meta data (props/events/slots/exposed, with resolved type schemas)
       "vueComponentMeta": { "props": [/* ... */], "events": [/* ... */] }
     }
   },
   "meta": { "docgen": "vue-component-meta", "durationMs": 875 }
 }
 ```
+
+### Type schema resolution
+
+Each prop/event/slot/exposed entry carries a `schema` describing its resolved type. Complex types
+are expanded into a structured shape rather than left as a flat type string, so MCP clients and
+docs tooling can introspect them:
+
+- unions → `{ "kind": "enum", "schema": ["\"sm\"", "\"md\"", "\"lg\""] }`
+- arrays → `{ "kind": "array", "schema": [/* element type */] }`
+- objects → `{ "kind": "object", "schema": { "label": { /* nested prop */ } } }`
+- callbacks → `{ "kind": "event", "schema": [/* parameter types */] }`
+
+To keep the manifest bounded, **types declared in `node_modules` are left as opaque type strings**
+instead of being expanded — the same approach Storybook applies to react-docgen-typescript
+(`propFilter: !/node_modules/.test(parent.fileName)`). This prevents large/circular DOM and library
+types (`MouseEvent`, `HTMLElement`, third-party generics) from exploding the output, while your own
+project types are fully resolved.
+
+> **Generic components:** a named object type parameterized by an unbound type parameter (e.g. a
+> prop typed `Foo<T>` on a `<script setup generic="T">` component) stays a type string and is not
+> expanded. Unions, string-literal unions and arrays still resolve. This is a vue-component-meta
+> limitation — the type parameter has no concrete binding to resolve against.
 
 ## Notes & limitations
 
