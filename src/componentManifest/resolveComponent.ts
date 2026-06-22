@@ -183,26 +183,24 @@ function findImport(
 }
 
 /**
- * Resolves `meta.component` of a parsed CSF file to the component's source file on disk so
- * vue-component-meta can extract its metadata.
+ * Resolves an imported local identifier in a story file to the source file that defines it on disk,
+ * following barrel re-exports down to the underlying module. Shared by {@link resolveComponentRef}
+ * (the story's `meta.component`) and by referenced-symbol resolution (sub-components and helpers a
+ * story imports but does not feature in its own `meta.component`).
+ *
+ * `hints.importSource`/`hints.isDefaultImport` let callers that already know the import (e.g. the
+ * CSF parser's `_rawComponentPath`) bypass the import scan; otherwise the story's import
+ * declarations are scanned for `localName`.
  */
-export function resolveComponentRef(
+export function resolveLocalIdentifier(
   csf: CsfFile,
+  localName: string,
   absoluteStoryPath: string,
-  tsconfigPath?: string
+  tsconfigPath?: string,
+  hints?: { importSource?: string; isDefaultImport?: boolean }
 ): ResolveComponentResult {
-  const localName = csf._meta?.component;
-  if (!localName) {
-    return {
-      error: {
-        name: 'No component found',
-        message: 'We could not detect the component from your story file. Specify meta.component.',
-      },
-    };
-  }
-
   const imported = findImport(csf, localName);
-  const importSource = csf._rawComponentPath ?? imported?.source;
+  const importSource = hints?.importSource ?? imported?.source;
   if (!importSource) {
     return {
       error: {
@@ -211,9 +209,7 @@ export function resolveComponentRef(
       },
     };
   }
-  const isDefaultImport = csf._componentImportSpecifier
-    ? t.isImportDefaultSpecifier(csf._componentImportSpecifier)
-    : (imported?.isDefaultImport ?? true);
+  const isDefaultImport = hints?.isDefaultImport ?? imported?.isDefaultImport ?? true;
 
   const basedir = dirname(absoluteStoryPath);
   let absPath: string | undefined;
@@ -259,4 +255,31 @@ export function resolveComponentRef(
       isDefaultImport,
     },
   };
+}
+
+/**
+ * Resolves `meta.component` of a parsed CSF file to the component's source file on disk so
+ * vue-component-meta can extract its metadata.
+ */
+export function resolveComponentRef(
+  csf: CsfFile,
+  absoluteStoryPath: string,
+  tsconfigPath?: string
+): ResolveComponentResult {
+  const localName = csf._meta?.component;
+  if (!localName) {
+    return {
+      error: {
+        name: 'No component found',
+        message: 'We could not detect the component from your story file. Specify meta.component.',
+      },
+    };
+  }
+
+  return resolveLocalIdentifier(csf, localName, absoluteStoryPath, tsconfigPath, {
+    importSource: csf._rawComponentPath ?? undefined,
+    isDefaultImport: csf._componentImportSpecifier
+      ? t.isImportDefaultSpecifier(csf._componentImportSpecifier)
+      : undefined,
+  });
 }

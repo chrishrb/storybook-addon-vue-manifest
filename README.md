@@ -87,16 +87,48 @@ addons: [
         {
           "id": "example-button--primary",
           "name": "Primary",
-          "snippet": "<Button primary @click=\"onClick\" label=\"Button\" />"
+          "snippet": "<Button primary @click=\"onClick\" label=\"Button\" />",
+          // verbatim render source for render-based stories (see "Story source" below)
+          "source": "render: () => ({ /* setup(), components, template */ })"
         }
       ],
       // raw vue-component-meta data (props/events/slots/exposed, with resolved type schemas)
       "vueComponentMeta": { "props": [/* ... */], "events": [/* ... */] }
+    },
+    // sub-components referenced by a story but lacking a story of their own get their own entry,
+    // tagged with the component ids that reference them (see "Referenced components" below)
+    "data-table-header-cell": {
+      "id": "data-table-header-cell",
+      "name": "DataTableHeaderCell",
+      "path": "src/components/DataTableHeaderCell.vue",
+      "stories": [],
+      "import": "import DataTableHeaderCell from '@my-lib/ui';",
+      "referencedBy": ["example-button"],
+      "vueComponentMeta": { "props": [/* ... */] }
     }
   },
   "meta": { "docgen": "vue-component-meta", "durationMs": 875 }
 }
 ```
+
+### Story source
+
+The `snippet` is the rendered Vue template. For stories written with a `render` function, the
+template alone references locals it does not define — e.g. `<DataCollection :columns="columns" />`,
+where `columns` is built in `setup()`. The `source` field carries the **verbatim render function**
+(its `components`/`setup`/`data`/`template`), preceded by the module-level declarations the render
+references (`const columns = …`, helpers, local types), resolved transitively so the snapshot is
+self-contained. Args-only stories (no `render`) omit `source` — the snippet already conveys
+everything.
+
+### Referenced components
+
+Stories often render sub-components that have no story of their own (cell renderers used inside a
+table's column definitions, etc.). Each such component — registered in a `components: {}` map or
+passed to `h(...)` — is resolved, run through vue-component-meta, and emitted as its own manifest
+entry so it appears in component listings with full prop docs and a usable `import`. These entries
+carry a `referencedBy` array (the component ids whose stories use them) and an empty `stories`
+array, and are de-duplicated against components that already have a story-backed entry.
 
 ### Type schema resolution
 

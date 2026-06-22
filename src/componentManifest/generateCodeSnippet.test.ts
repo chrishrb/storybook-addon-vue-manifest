@@ -5,7 +5,11 @@ import { loadCsf } from 'storybook/internal/csf-tools';
 import { dedent } from 'ts-dedent';
 import type { ComponentMeta } from 'vue-component-meta';
 
-import { generateVueSnippet, mergeArgsFromAst } from './generateCodeSnippet.ts';
+import {
+  extractStorySource,
+  generateVueSnippet,
+  mergeArgsFromAst,
+} from './generateCodeSnippet.ts';
 
 const componentMeta = {
   type: 1,
@@ -129,5 +133,76 @@ describe('generateVueSnippet', () => {
     expect(generateVueSnippet({ label: undefined }, componentMeta, 'Button')).toBe(
       '<Button :label="label" />'
     );
+  });
+});
+
+describe('extractStorySource', () => {
+  const sourceOf = (code: string, storyExport: string) => {
+    const csf = parseCsf(code);
+    const excludeNames = new Set([...Object.keys(csf._stories), 'default', 'meta']);
+    return extractStorySource(
+      csf._storyAnnotations[storyExport]?.render,
+      csf._ast.program.body,
+      excludeNames
+    );
+  };
+
+  test('returns undefined for args-only stories (no render)', () => {
+    const code = dedent`
+      import DataCollection from './DataCollection.vue';
+      export default { component: DataCollection };
+      export const Primary = { args: { size: 'md' } };
+    `;
+    expect(sourceOf(code, 'Primary')).toBeUndefined();
+  });
+
+  test('captures the full render and inlines the module-level definitions it references', () => {
+    const code = dedent`
+      import DataCollection from './DataCollection.vue';
+      import { DataTableHeaderCell, calculateColumnSum } from '@lib/ui';
+      import { h } from 'vue';
+
+      const columns = [
+        { id: 'name', header: ({ column }) => h(DataTableHeaderCell, { column }) },
+      ];
+
+      export default { component: DataCollection };
+
+      export const Default = {
+        render: () => ({
+          components: { DataCollection },
+          setup() {
+            const total = calculateColumnSum(columns);
+            return { columns, total };
+          },
+          template: \`<DataCollection :columns="columns" :total="total" />\`,
+        }),
+      };
+    `;
+    const source = sourceOf(code, 'Default');
+    // The module-level `columns` definition is inlined (no longer opaque)…
+    expect(source).toContain('const columns = [');
+    expect(source).toContain('h(DataTableHeaderCell');
+    // …along with the verbatim render (setup + template), prefixed as `render:`.
+    expect(source).toContain('render: () =>');
+    expect(source).toContain('calculateColumnSum(columns)');
+    expect(source).toContain('template: `<DataCollection :columns="columns" :total="total" />`');
+  });
+
+  test('does not inline unrelated declarations or other story exports', () => {
+    const code = dedent`
+      import DataCollection from './DataCollection.vue';
+      const used = [{ id: 'a' }];
+      const unused = [{ id: 'b' }];
+      export default { component: DataCollection };
+      export const Other = { args: {} };
+      export const Default = {
+        render: () => ({ setup: () => ({ used }), template: '<DataCollection :columns="used" />' }),
+      };
+    `;
+    const source = sourceOf(code, 'Default');
+    expect(source).toContain('const used = [');
+    expect(source).not.toContain('unused');
+    expect(source).not.toContain('Other');
   });
 });

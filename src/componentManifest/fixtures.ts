@@ -67,6 +67,58 @@ export const fsMocks = {
         defineProps<{ user?: { name: string } }>();
         </script>
         <template><header>{{ user?.name }}</header></template>`,
+  ['./src/stories/columnHelpers.ts']: dedent`
+        import type { DataCollection } from './DataCollection.vue';
+
+        /** A column definition for {@link DataCollection}. */
+        export interface ColumnDef {
+          id: string;
+          header?: (ctx: { column: ColumnDef }) => unknown;
+        }
+
+        /** Sum a numeric column across the given rows. */
+        export function calculateColumnSum(columns: ColumnDef[]): number {
+          return columns.length;
+        }`,
+  ['./src/stories/DataCollection.stories.ts']: dedent`
+        import type { Meta, StoryObj } from '@storybook/vue3';
+        import { h } from 'vue';
+        import DataCollection from './DataCollection.vue';
+        import DataTableHeaderCell from './DataTableHeaderCell.vue';
+        import { calculateColumnSum, type ColumnDef } from './columnHelpers';
+
+        const meta = {
+          title: 'Example/DataCollection',
+          component: DataCollection,
+        } satisfies Meta<typeof DataCollection>;
+        export default meta;
+        type Story = StoryObj<typeof meta>;
+
+        const columns: ColumnDef[] = [
+          { id: 'name', header: ({ column }) => h(DataTableHeaderCell, { column }) },
+        ];
+
+        export const Default: Story = {
+          render: () => ({
+            components: { DataCollection },
+            setup() {
+              const total = calculateColumnSum(columns);
+              return { columns, total };
+            },
+            template: \`<DataCollection :columns="columns" :total="total" />\`,
+          }),
+        };`,
+  ['./src/stories/DataCollection.vue']: dedent`
+        <script setup lang="ts">
+        import type { ColumnDef } from './columnHelpers';
+        defineProps<{ columns: ColumnDef[]; total?: number }>();
+        </script>
+        <template><table /></template>`,
+  ['./src/stories/DataTableHeaderCell.vue']: dedent`
+        <script setup lang="ts">
+        defineProps<{ column: { id: string } }>();
+        </script>
+        <template><th>{{ column.id }}</th></template>`,
   ['./src/stories/NoComponent.stories.ts']: dedent`
         import type { Meta, StoryObj } from '@storybook/vue3';
 
@@ -141,9 +193,38 @@ export const headerComponentMeta = {
   exposed: [],
 } as unknown as ComponentMeta;
 
+export const dataCollectionComponentMeta = {
+  type: 1,
+  props: [
+    { name: 'columns', type: 'ColumnDef[]', required: true, schema: 'ColumnDef[]' },
+    { name: 'total', type: 'number | undefined', required: false, schema: 'number | undefined' },
+  ],
+  events: [],
+  slots: [],
+  exposed: [],
+} as unknown as ComponentMeta;
+
+export const dataTableHeaderCellComponentMeta = {
+  type: 1,
+  props: [
+    {
+      name: 'column',
+      type: '{ id: string }',
+      required: true,
+      description: 'The column this header renders',
+      schema: { kind: 'object', type: '{ id: string }', schema: {} },
+    },
+  ],
+  events: [],
+  slots: [],
+  exposed: [],
+} as unknown as ComponentMeta;
+
 export const componentMetaByPath: Record<string, ComponentMeta> = {
   '/app/src/stories/Button.vue': buttonComponentMeta,
   '/app/src/stories/Header.vue': headerComponentMeta,
+  '/app/src/stories/DataCollection.vue': dataCollectionComponentMeta,
+  '/app/src/stories/DataTableHeaderCell.vue': dataTableHeaderCellComponentMeta,
 };
 
 export const indexJson: { v: number; entries: Record<string, IndexEntry> } = {
@@ -225,6 +306,18 @@ export const indexJson: { v: number; entries: Record<string, IndexEntry> } = {
       componentPath: './src/stories/Header.vue',
       tags: [Tag.DEV, Tag.TEST, Tag.AUTODOCS, Tag.MANIFEST],
       exportName: 'LoggedIn',
+    },
+    // A story that references a storyless sub-component (DataTableHeaderCell) and a helper.
+    'example-datacollection--default': {
+      type: 'story',
+      subtype: 'story',
+      id: 'example-datacollection--default',
+      name: 'Default',
+      title: 'Example/DataCollection',
+      importPath: './src/stories/DataCollection.stories.ts',
+      componentPath: './src/stories/DataCollection.vue',
+      tags: [Tag.DEV, Tag.TEST, Tag.AUTODOCS, Tag.MANIFEST],
+      exportName: 'Default',
     },
     'example-nocomponent--default': {
       type: 'story',
