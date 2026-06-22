@@ -70,55 +70,12 @@ test('generates component manifest with snippets, import and description', async
       },
       "name": "Button",
       "path": "./src/stories/Button.stories.ts",
-      "reactComponentMeta": {
-        "props": {
-          "count": {
-            "defaultValue": undefined,
-            "description": undefined,
-            "required": false,
-            "type": {
-              "name": "number | undefined",
-              "raw": "undefined | number",
-            },
-          },
-          "icon": {
-            "defaultValue": undefined,
-            "description": "Optional leading icon",
-            "required": false,
-            "type": {
-              "name": "IconConfig | undefined",
-              "raw": "undefined | { name: string; size?: undefined | number }",
-            },
-          },
-          "label": {
-            "defaultValue": undefined,
-            "description": "The button label",
-            "required": true,
-            "type": {
-              "name": "string",
-              "raw": "string",
-            },
-          },
-          "primary": {
-            "defaultValue": {
-              "value": "false",
-            },
-            "description": "Use the primary visual style",
-            "required": false,
-            "type": {
-              "name": "boolean | undefined",
-              "raw": "undefined | false | true",
-            },
-          },
-        },
-      },
       "stories": [
         {
           "description": "The primary variant of the button",
           "id": "example-button--primary",
           "name": "Primary",
           "snippet": "<Button @click="onClick" primary label="Button" />",
-          "source": undefined,
           "summary": undefined,
         },
         {
@@ -126,7 +83,6 @@ test('generates component manifest with snippets, import and description', async
           "id": "example-button--secondary",
           "name": "Secondary",
           "snippet": "<Button @click="onClick" label="Button">Click me</Button>",
-          "source": undefined,
           "summary": undefined,
         },
         {
@@ -134,18 +90,13 @@ test('generates component manifest with snippets, import and description', async
           "id": "example-button--with-count",
           "name": "With Count",
           "snippet": "<Button @click="onClick" label="Button" :count="3" />",
-          "source": undefined,
           "summary": undefined,
         },
         {
           "description": "A story whose own render() defines a literal template",
           "id": "example-button--all-variants",
           "name": "All Variants",
-          "snippet": "<div style="display: flex; gap: 0.5rem;">
-      <Button primary label="primary" />
-      <Button label="secondary" />
-    </div>",
-          "source": "render: () => ({
+          "snippet": "render: () => ({
       components: {
         Button
       },
@@ -259,14 +210,10 @@ test('uses the literal template from a story-level render() instead of <Componen
   const story = result?.components?.components['example-button']?.stories.find(
     (s) => s.id === 'example-button--all-variants'
   );
-  expect(story?.snippet).toBe(
-    [
-      '<div style="display: flex; gap: 0.5rem;">',
-      '  <Button primary label="primary" />',
-      '  <Button label="secondary" />',
-      '</div>',
-    ].join('\n')
-  );
+  // The verbatim render source captures the literal template rather than a generated <Component />.
+  expect(story?.snippet).toContain('<div style="display: flex; gap: 0.5rem;">');
+  expect(story?.snippet).toContain('<Button primary label="primary" />');
+  expect(story?.snippet).toContain('<Button label="secondary" />');
 });
 
 test('sets the docgen engine and duration in the manifest meta', async () => {
@@ -332,13 +279,13 @@ test('emits the full render source for render-based stories', async () => {
   const story = componentOf(result, 'example-datacollection')?.stories.find(
     (s) => s.id === 'example-datacollection--default'
   );
-  // Module-level column definitions referenced by the render are inlined into the source…
-  expect(story?.source).toContain('const columns');
-  expect(story?.source).toContain('h(DataTableHeaderCell');
-  expect(story?.source).toContain('calculateColumnSum(columns)');
+  // Module-level column definitions referenced by the render are inlined into the snippet…
+  expect(story?.snippet).toContain('const columns');
+  expect(story?.snippet).toContain('h(DataTableHeaderCell');
+  expect(story?.snippet).toContain('calculateColumnSum(columns)');
   // …and the verbatim render (setup + template) is captured, not just the template snippet.
-  expect(story?.source).toContain('render:');
-  expect(story?.source).toContain('template:');
+  expect(story?.snippet).toContain('render:');
+  expect(story?.snippet).toContain('template:');
 });
 
 test('documents referenced storyless sub-components as their own entries', async () => {
@@ -353,7 +300,6 @@ test('documents referenced storyless sub-components as their own entries', async
   // It carries real prop documentation and a usable import statement.
   expect(headerCell?.import).toBe("import DataTableHeaderCell from './DataTableHeaderCell.vue';");
   expect(headerCell?.vueComponentMeta?.props?.[0]?.name).toBe('column');
-  expect(headerCell?.reactComponentMeta?.props.column).toBeDefined();
   expect(headerCell?.error).toBeUndefined();
 });
 

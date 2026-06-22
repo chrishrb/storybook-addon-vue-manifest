@@ -13,7 +13,7 @@ import type {
 } from 'storybook/internal/types';
 
 import path from 'pathe';
-import type { ComponentMeta, PropertyMetaSchema } from 'vue-component-meta';
+import type { ComponentMeta } from 'vue-component-meta';
 
 import { type VueManifestAddonOptions, resolveTsconfigPath } from '../options.ts';
 import {
@@ -47,35 +47,13 @@ import {
 import { extractJSDocInfo } from './jsdocTags.ts';
 import { cachedReadTextFileSync, invalidateCache, invariant } from './utils.ts';
 
-/**
- * Subset of react-docgen-typescript's `ComponentDoc` props shape that the Storybook MCP server's
- * markdown formatter understands. The server reads props from one of `reactDocgen`,
- * `reactDocgenTypescript` or `reactComponentMeta` (in that order) and only ever accesses
- * `type.raw ?? type.name`, `description`, `defaultValue.value` and `required` — so populating this
- * field makes a Vue manifest render correctly in the otherwise React-only MCP server.
- */
-interface ComponentDocLikeProps {
-  [propName: string]: {
-    description?: string;
-    type?: { name?: string; raw?: string };
-    defaultValue?: { value?: string };
-    required?: boolean;
-  };
-}
-
-/** A manifest story entry plus the verbatim render `source` this addon captures (see {@link extractStorySource}). */
-export type VueStory = NonNullable<ComponentManifest['stories']>[number] & { source?: string };
+/** A manifest story entry as captured by this addon. */
+export type VueStory = NonNullable<ComponentManifest['stories']>[number];
 
 /** Vue-specific extension of ComponentManifest with the raw vue-component-meta data attached. */
 export interface VueComponentManifest extends Omit<ComponentManifest, 'stories'> {
   stories: VueStory[];
   vueComponentMeta?: ComponentMeta;
-  /**
-   * React-MCP-compatible projection of {@link vueComponentMeta}'s props. Lets the upstream
-   * Storybook MCP server (which only knows how to parse react docgen formats) render Vue props
-   * without any changes on its side. See {@link toReactComponentMeta}.
-   */
-  reactComponentMeta?: { props: ComponentDocLikeProps };
   /**
    * Component ids of the documented components whose stories reference this one. Present only on
    * entries synthesized for sub-components that have no story of their own (see
@@ -84,72 +62,6 @@ export interface VueComponentManifest extends Omit<ComponentManifest, 'stories'>
    */
   referencedBy?: string[];
   [key: string]: unknown;
-}
-
-/**
- * Serializes a vue-component-meta {@link PropertyMetaSchema} into a TypeScript-like type string,
- * expanding the resolved structure (union members, object shapes, array elements) rather than
- * leaving an opaque alias name. Used for the `raw` type the MCP markdown formatter prefers, so a
- * prop typed `IconConfig` renders as `{ name: string; size?: number }` instead of `IconConfig`.
- * `node_modules` types stay opaque because the checker already leaves them as plain strings.
- */
-function serializeSchema(schema: PropertyMetaSchema): string {
-  if (typeof schema === 'string') {
-    return schema;
-  }
-
-  switch (schema.kind) {
-    case 'enum':
-      // Optional/union types: a union of the resolved member schemas (recurse so object members
-      // expand too). Fall back to the flat type when no members were resolved.
-      return schema.schema?.length
-        ? schema.schema.map(serializeSchema).join(' | ')
-        : schema.type;
-    case 'array':
-      // `schema` holds the resolved element type(s); fall back to the flat `Foo[]` string.
-      return schema.schema?.length
-        ? `${schema.schema.map(serializeSchema).join(' | ')}[]`
-        : schema.type;
-    case 'object': {
-      const properties = schema.schema ? Object.values(schema.schema) : [];
-      return properties.length
-        ? `{ ${properties
-            .map((p) => `${p.name}${p.required ? '' : '?'}: ${serializeSchema(p.schema)}`)
-            .join('; ')} }`
-        : schema.type;
-    }
-    case 'event':
-      // Callback signatures are already well-formed in `type` (e.g. `(event: MouseEvent) => void`).
-      return schema.type;
-    default:
-      return (schema as { type?: string }).type ?? 'unknown';
-  }
-}
-
-/**
- * Projects vue-component-meta props into the `ComponentDocLike` shape the Storybook MCP server's
- * markdown formatter consumes. `name` keeps the declared type (an alias such as `IconConfig`),
- * while `raw` carries the fully resolved schema — the formatter prefers `raw`, so MCP clients see
- * the expanded structure.
- */
-function toReactComponentMeta(componentMeta: ComponentMeta): { props: ComponentDocLikeProps } {
-  return {
-    props: Object.fromEntries(
-      componentMeta.props.map((prop) => [
-        prop.name,
-        {
-          description: prop.description || undefined,
-          // `schema` is absent for props the checker couldn't resolve — fall back to the flat type.
-          type: {
-            name: prop.type,
-            raw: prop.schema === undefined ? prop.type : serializeSchema(prop.schema),
-          },
-          defaultValue: prop.default === undefined ? undefined : { value: prop.default },
-          required: prop.required,
-        },
-      ])
-    ),
-  };
 }
 
 /** Lower-cased, hyphen-separated id derived from a component display name (e.g. `DataTableHeaderCell` → `data-table-header-cell`). */
@@ -277,7 +189,6 @@ async function buildReferencedComponents(
       jsDocTags: extracted.jsDocTags ?? {},
       referencedBy: [...referencedBy].sort(),
       vueComponentMeta: extracted.meta,
-      reactComponentMeta: toReactComponentMeta(extracted.meta),
     });
   }
 
@@ -319,7 +230,7 @@ function extractStories(
 
         // Merge meta + story args from the AST and generate the Vue template snippet
         const args = mergeArgsFromAst(csf._metaNode, csf._storyAnnotations[storyExport]);
-        const snippet =
+        const generatedSnippet =
           renderTemplate ??
           generateVueSnippet(
             Object.keys(args).length > 0 ? args : undefined,
@@ -327,15 +238,15 @@ function extractStories(
             tagName
           );
 
-        // Verbatim render source (incl. setup/columns definitions) for render-based stories — the
-        // `snippet` only carries the template, which can reference opaque locals like `columns`.
+        // Prefer the verbatim render source (incl. setup/columns definitions) for render-based
+        // stories — the generated snippet only carries the template, which can reference opaque
+        // locals like `columns`. Fall back to the generated snippet when there is no render source.
         const source = extractStorySource(renderNode, csf._ast.program.body, storyExportNames);
 
         return {
           id: story.id,
           name,
-          snippet,
-          source,
+          snippet: source ?? generatedSnippet,
           description: finalDescription?.trim(),
           summary: tags.summary?.[0],
         };
@@ -466,7 +377,6 @@ export const manifests: PresetPropertyFn<
           summary,
           jsDocTags,
           vueComponentMeta: componentMeta,
-          reactComponentMeta: componentMeta ? toReactComponentMeta(componentMeta) : undefined,
         };
 
         if (resolved.error) {
