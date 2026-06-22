@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/chrishrb/storybook-addon-vue-manifest/compare/v0.2.0...v0.3.0) (2026-06-22)
+
+
+### Features
+
+* **manifest:** Capture render source and document referenced components ([ae04c47](https://github.com/chrishrb/storybook-addon-vue-manifest/commit/ae04c474ab54b8276a23de768f5862aee70f0ed3))
+* remove react component metadata ([361143f](https://github.com/chrishrb/storybook-addon-vue-manifest/commit/361143fa942f46292b88789a35bf09675a84312f))
+
 ## [0.2.0](https://github.com/chrishrb/storybook-addon-vue-manifest/compare/v0.1.1...v0.2.0) (2026-06-17)
 
 
