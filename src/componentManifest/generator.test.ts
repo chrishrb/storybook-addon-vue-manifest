@@ -3,7 +3,7 @@ import { beforeEach, expect, test, vi } from 'vitest';
 import { Tag } from './entries.ts';
 
 import { componentMetaByPath, indexJson } from './fixtures.ts';
-import { manifests } from './generator.ts';
+import { type VueComponentManifest, manifests } from './generator.ts';
 import { setupMemfsMocks } from './memfs-test-setup.ts';
 import { extractComponentMeta, getChecker } from './vueComponentMetaDocgen.ts';
 
@@ -35,13 +35,22 @@ const manifestEntries = Object.values(indexJson.entries).filter(
   (entry) => entry.tags?.includes(Tag.MANIFEST) ?? false
 );
 
+/** Look up a component as its Vue-extended manifest shape (vueComponentMeta, referencedBy, …). */
+const componentOf = (
+  result: Awaited<ReturnType<typeof manifests>>,
+  id: string
+): VueComponentManifest | undefined =>
+  result?.components?.components[id] as VueComponentManifest | undefined;
+
 beforeEach(() => {
   setupMemfsMocks();
 
   vi.mocked(getChecker).mockResolvedValue({} as Awaited<ReturnType<typeof getChecker>>);
   vi.mocked(extractComponentMeta).mockImplementation(async (checker, absPath) => {
     const meta = componentMetaByPath[absPath];
-    return meta ? { meta, displayName: 'Button', exportName: 'default' } : undefined;
+    // Derive the display name from the file name so referenced sub-components get a sensible id.
+    const displayName = absPath.split('/').at(-1)?.replace(/\.\w+$/, '') ?? 'Component';
+    return meta ? { meta, displayName, exportName: 'default' } : undefined;
   });
 });
 
@@ -109,6 +118,7 @@ test('generates component manifest with snippets, import and description', async
           "id": "example-button--primary",
           "name": "Primary",
           "snippet": "<Button @click="onClick" primary label="Button" />",
+          "source": undefined,
           "summary": undefined,
         },
         {
@@ -116,6 +126,7 @@ test('generates component manifest with snippets, import and description', async
           "id": "example-button--secondary",
           "name": "Secondary",
           "snippet": "<Button @click="onClick" label="Button">Click me</Button>",
+          "source": undefined,
           "summary": undefined,
         },
         {
@@ -123,6 +134,7 @@ test('generates component manifest with snippets, import and description', async
           "id": "example-button--with-count",
           "name": "With Count",
           "snippet": "<Button @click="onClick" label="Button" :count="3" />",
+          "source": undefined,
           "summary": undefined,
         },
         {
@@ -133,6 +145,17 @@ test('generates component manifest with snippets, import and description', async
       <Button primary label="primary" />
       <Button label="secondary" />
     </div>",
+          "source": "render: () => ({
+      components: {
+        Button
+      },
+      template: \`
+          <div style="display: flex; gap: 0.5rem;">
+            <Button primary label="primary" />
+            <Button label="secondary" />
+          </div>
+        \`
+    })",
           "summary": undefined,
         },
       ],
@@ -302,4 +325,43 @@ test('merges existing manifests', async () => {
   const result = await runManifests(manifestEntries, { other: { v: 0 } });
   expect(result?.other).toEqual({ v: 0 });
   expect(result?.components).toBeDefined();
+});
+
+test('emits the full render source for render-based stories', async () => {
+  const result = await runManifests(manifestEntries);
+  const story = componentOf(result, 'example-datacollection')?.stories.find(
+    (s) => s.id === 'example-datacollection--default'
+  );
+  // Module-level column definitions referenced by the render are inlined into the source…
+  expect(story?.source).toContain('const columns');
+  expect(story?.source).toContain('h(DataTableHeaderCell');
+  expect(story?.source).toContain('calculateColumnSum(columns)');
+  // …and the verbatim render (setup + template) is captured, not just the template snippet.
+  expect(story?.source).toContain('render:');
+  expect(story?.source).toContain('template:');
+});
+
+test('documents referenced storyless sub-components as their own entries', async () => {
+  const result = await runManifests(manifestEntries);
+  const headerCell = componentOf(result, 'data-table-header-cell');
+
+  expect(headerCell).toBeDefined();
+  expect(headerCell?.name).toBe('DataTableHeaderCell');
+  // No story of its own — it is only referenced.
+  expect(headerCell?.stories).toEqual([]);
+  expect(headerCell?.referencedBy).toEqual(['example-datacollection']);
+  // It carries real prop documentation and a usable import statement.
+  expect(headerCell?.import).toBe("import DataTableHeaderCell from './DataTableHeaderCell.vue';");
+  expect(headerCell?.vueComponentMeta?.props?.[0]?.name).toBe('column');
+  expect(headerCell?.reactComponentMeta?.props.column).toBeDefined();
+  expect(headerCell?.error).toBeUndefined();
+});
+
+test('does not duplicate a referenced component that also has its own story', async () => {
+  const result = await runManifests(manifestEntries);
+  // DataCollection is the primary component of its story — it must not also appear as a referenced
+  // entry, and its story-backed entry has no referencedBy marker.
+  const dataCollection = componentOf(result, 'example-datacollection');
+  expect(dataCollection?.referencedBy).toBeUndefined();
+  expect(dataCollection?.stories.length).toBeGreaterThan(0);
 });

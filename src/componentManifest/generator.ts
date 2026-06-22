@@ -24,11 +24,21 @@ import {
 import { extractComponentDescription } from './extractComponentDescription.ts';
 import {
   extractRenderTemplate,
+  extractStorySource,
   generateVueSnippet,
   mergeArgsFromAst,
 } from './generateCodeSnippet.ts';
 import { buildComponentImport, getPackageInfo } from './getComponentImports.ts';
-import { type ResolvedComponentRef, resolveComponentRef } from './resolveComponent.ts';
+import {
+  type ResolvedComponentRef,
+  resolveComponentRef,
+  resolveLocalIdentifier,
+} from './resolveComponent.ts';
+import {
+  collectReferences,
+  collectStoryImports,
+  storyReferenceNodes,
+} from './referencedSymbols.ts';
 import {
   extractComponentMeta,
   getChecker,
@@ -53,8 +63,12 @@ interface ComponentDocLikeProps {
   };
 }
 
+/** A manifest story entry plus the verbatim render `source` this addon captures (see {@link extractStorySource}). */
+export type VueStory = NonNullable<ComponentManifest['stories']>[number] & { source?: string };
+
 /** Vue-specific extension of ComponentManifest with the raw vue-component-meta data attached. */
-export interface VueComponentManifest extends ComponentManifest {
+export interface VueComponentManifest extends Omit<ComponentManifest, 'stories'> {
+  stories: VueStory[];
   vueComponentMeta?: ComponentMeta;
   /**
    * React-MCP-compatible projection of {@link vueComponentMeta}'s props. Lets the upstream
@@ -62,6 +76,13 @@ export interface VueComponentManifest extends ComponentManifest {
    * without any changes on its side. See {@link toReactComponentMeta}.
    */
   reactComponentMeta?: { props: ComponentDocLikeProps };
+  /**
+   * Component ids of the documented components whose stories reference this one. Present only on
+   * entries synthesized for sub-components that have no story of their own (see
+   * {@link buildReferencedComponents}), so MCP consumers can tell them apart from story-backed
+   * components and trace where they are used.
+   */
+  referencedBy?: string[];
   [key: string]: unknown;
 }
 
@@ -131,6 +152,138 @@ function toReactComponentMeta(componentMeta: ComponentMeta): { props: ComponentD
   };
 }
 
+/** Lower-cased, hyphen-separated id derived from a component display name (e.g. `DataTableHeaderCell` → `data-table-header-cell`). */
+function kebabCase(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/[\s_]+/g, '-')
+    .toLowerCase();
+}
+
+/**
+ * Imported component identifiers a story file references (in a `components: {}` map or via `h(...)`)
+ * other than its own `meta.component`. Restricted to imported names so each can be resolved to a
+ * file — locally-defined inline components are skipped.
+ */
+function collectReferencedComponentNames(
+  csf: CsfFile,
+  primaryLocalName: string | undefined
+): string[] {
+  const importedNames = new Set(collectStoryImports(csf).map((imp) => imp.localName));
+  const { componentNames } = collectReferences(storyReferenceNodes(csf));
+  return [...componentNames].filter(
+    (name) => name !== primaryLocalName && importedNames.has(name)
+  );
+}
+
+/** A sub-component referenced by a story, pending resolution and meta extraction. */
+interface ReferencedCandidate {
+  csf: CsfFile;
+  absoluteStoryPath: string;
+  localName: string;
+  /** Component id of the documented component whose story references it. */
+  componentId: string;
+}
+
+/**
+ * Resolves and documents the sub-components referenced by stories but lacking a story of their own
+ * (e.g. cell renderers used inside a table's column definitions). Each unique component file is
+ * resolved once, run through vue-component-meta, and emitted as a manifest entry tagged with the
+ * {@link VueComponentManifest.referencedBy} ids of the stories that use it. Components that already
+ * have a story-backed entry (matched by resolved file path) are skipped.
+ */
+async function buildReferencedComponents(
+  candidates: ReferencedCandidate[],
+  primaryAbsPaths: ReadonlySet<string>,
+  existingIds: ReadonlySet<string>,
+  checker: Awaited<ReturnType<typeof getChecker>>,
+  tsconfigPath: string,
+  watch: boolean | undefined
+): Promise<VueComponentManifest[]> {
+  // Dedupe candidates by resolved file (+ export) so a component referenced from many stories is
+  // documented once, accumulating every referencing component id.
+  const byResolved = new Map<
+    string,
+    { ref: ResolvedComponentRef; referencedBy: Set<string>; absoluteStoryPath: string }
+  >();
+
+  for (const candidate of candidates) {
+    const { ref } = resolveLocalIdentifier(
+      candidate.csf,
+      candidate.localName,
+      candidate.absoluteStoryPath,
+      tsconfigPath
+    );
+    // Unresolvable references and components already documented via their own story are skipped.
+    if (!ref || primaryAbsPaths.has(ref.absPath)) {
+      continue;
+    }
+    const key = `${ref.absPath}::${ref.componentExportName ?? ''}`;
+    const existing = byResolved.get(key);
+    if (existing) {
+      existing.referencedBy.add(candidate.componentId);
+    } else {
+      byResolved.set(key, {
+        ref,
+        referencedBy: new Set([candidate.componentId]),
+        absoluteStoryPath: candidate.absoluteStoryPath,
+      });
+    }
+  }
+
+  const usedIds = new Set(existingIds);
+  const entries: VueComponentManifest[] = [];
+
+  for (const { ref, referencedBy, absoluteStoryPath } of byResolved.values()) {
+    let extracted: Awaited<ReturnType<typeof extractComponentMeta>>;
+    try {
+      if (watch) {
+        refreshFileIfChanged(checker, ref.absPath);
+      }
+      extracted = await extractComponentMeta(
+        checker,
+        ref.absPath,
+        ref.localName,
+        ref.componentExportName
+      );
+    } catch {
+      // The checker throws when the file is outside its program — skip rather than emit a noise
+      // entry, the component is still visible in the referencing story's `source`.
+      continue;
+    }
+    if (!extracted) {
+      continue;
+    }
+
+    const id = kebabCase(extracted.displayName || ref.localName);
+    // A story-backed component (or an earlier referenced one) already owns this id — don't clobber.
+    if (usedIds.has(id)) {
+      continue;
+    }
+    usedIds.add(id);
+
+    const storyPackageName = getPackageInfo(undefined, absoluteStoryPath);
+    const componentPackageName = getPackageInfo(ref.absPath, absoluteStoryPath);
+
+    entries.push({
+      id,
+      name: extracted.displayName || ref.localName,
+      // The component's own source file (no story of its own), relative to the project root.
+      path: path.relative(process.cwd(), ref.absPath),
+      stories: [],
+      import: buildComponentImport(ref, storyPackageName, componentPackageName, undefined),
+      description: extracted.description,
+      summary: extracted.jsDocTags?.summary?.[0],
+      jsDocTags: extracted.jsDocTags ?? {},
+      referencedBy: [...referencedBy].sort(),
+      vueComponentMeta: extracted.meta,
+      reactComponentMeta: toReactComponentMeta(extracted.meta),
+    });
+  }
+
+  return entries;
+}
+
 /** Extract stories from a parsed CSF file, generating Vue template snippets. */
 function extractStories(
   csf: CsfFile,
@@ -138,6 +291,14 @@ function extractStories(
   tagName: string,
   manifestEntryIds: ReadonlySet<string>
 ) {
+  // Story/meta export names are skipped when inlining module declarations into a story's source —
+  // a render referencing another story export is not a definition worth inlining.
+  const storyExportNames: ReadonlySet<string> = new Set([
+    ...Object.keys(csf._stories),
+    'default',
+    'meta',
+  ]);
+
   return Object.entries(csf._stories)
     .filter(([, story]) =>
       // Only include stories that are in the list of entries already filtered for the 'manifest' tag
@@ -153,7 +314,8 @@ function extractStories(
         // A story-level `render` with a literal template is what actually renders, so prefer it
         // over args-based generation. Falls back to args when the render has no extractable
         // template (e.g. it only spreads `v-bind="args"`).
-        const renderTemplate = extractRenderTemplate(csf._storyAnnotations[storyExport]?.render);
+        const renderNode = csf._storyAnnotations[storyExport]?.render;
+        const renderTemplate = extractRenderTemplate(renderNode);
 
         // Merge meta + story args from the AST and generate the Vue template snippet
         const args = mergeArgsFromAst(csf._metaNode, csf._storyAnnotations[storyExport]);
@@ -165,10 +327,15 @@ function extractStories(
             tagName
           );
 
+        // Verbatim render source (incl. setup/columns definitions) for render-based stories — the
+        // `snippet` only carries the template, which can reference opaque locals like `columns`.
+        const source = extractStorySource(renderNode, csf._ast.program.body, storyExportNames);
+
         return {
           id: story.id,
           name,
           snippet,
+          source,
           description: finalDescription?.trim(),
           summary: tags.summary?.[0],
         };
@@ -215,6 +382,12 @@ export const manifests: PresetPropertyFn<
     ...selectComponentEntriesByComponentId(manifestEntries).values(),
   ];
 
+  // Sub-components referenced by stories (and the resolved paths of the story-backed components, so
+  // referenced ones that turn out to have their own story are not duplicated) are gathered during
+  // the primary pass and documented afterwards by buildReferencedComponents.
+  const referencedCandidates: ReferencedCandidate[] = [];
+  const primaryAbsPaths = new Set<string>();
+
   const components = await Promise.all(
     entriesByUniqueComponent.map(async (entry): Promise<VueComponentManifest> => {
       const id = getComponentIdFromEntry(entry);
@@ -232,6 +405,13 @@ export const manifests: PresetPropertyFn<
 
         const resolved = resolveComponentRef(csf, absoluteStoryPath, tsconfigPath);
         const ref: ResolvedComponentRef | undefined = resolved.ref;
+
+        if (ref) {
+          primaryAbsPaths.add(ref.absPath);
+        }
+        for (const localName of collectReferencedComponentNames(csf, ref?.localName)) {
+          referencedCandidates.push({ csf, absoluteStoryPath, localName, componentId: id });
+        }
 
         let componentMeta: ComponentMeta | undefined;
         let extractionError: { name: string; message: string } | undefined;
@@ -320,13 +500,26 @@ export const manifests: PresetPropertyFn<
     })
   );
 
+  // Document referenced sub-components (no story of their own) once all primary components — and
+  // their resolved paths/ids — are known.
+  const referencedComponents = await buildReferencedComponents(
+    referencedCandidates,
+    primaryAbsPaths,
+    new Set(components.map((component) => component.id)),
+    checker,
+    tsconfigPath,
+    watch
+  );
+
   const durationMs = Math.round(performance.now() - startTime);
 
   return {
     ...existingManifests,
     components: {
       v: 0,
-      components: Object.fromEntries(components.map((component) => [component.id, component])),
+      components: Object.fromEntries(
+        [...components, ...referencedComponents].map((component) => [component.id, component])
+      ),
       meta: {
         // 'vue-component-meta' is not yet part of the docgen union published in storybook's
         // ComponentsManifest type — drop the cast once it is.

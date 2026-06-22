@@ -180,6 +180,150 @@ export function extractRenderTemplate(node: t.Node | undefined): string | undefi
   return undefined;
 }
 
+/** AST keys that hold position/comment data rather than child nodes — skipped while walking. */
+const NON_CHILD_KEYS = new Set([
+  'loc',
+  'start',
+  'end',
+  'range',
+  'leadingComments',
+  'trailingComments',
+  'innerComments',
+  'comments',
+  'tokens',
+]);
+
+/** Depth-first walk over every descendant AST node (including the root), invoking `visit` on each. */
+export function walkAst(node: t.Node, visit: (n: t.Node) => void): void {
+  visit(node);
+  for (const key of Object.keys(node)) {
+    if (NON_CHILD_KEYS.has(key)) {
+      continue;
+    }
+    const value = (node as unknown as Record<string, unknown>)[key];
+    if (Array.isArray(value)) {
+      for (const child of value) {
+        if (child && typeof (child as t.Node).type === 'string') {
+          walkAst(child as t.Node, visit);
+        }
+      }
+    } else if (value && typeof (value as t.Node).type === 'string') {
+      walkAst(value as t.Node, visit);
+    }
+  }
+}
+
+/** Collect every identifier name referenced anywhere within an AST node. */
+function collectReferencedNames(node: t.Node): Set<string> {
+  const names = new Set<string>();
+  walkAst(node, (n) => {
+    if (t.isIdentifier(n)) {
+      names.add(n.name);
+    }
+  });
+  return names;
+}
+
+/**
+ * Index the top-level value/type declarations of a CSF program by name, so a story's `render` can
+ * be made self-contained by inlining the module-level `const columns = …` / helper / type it
+ * references. Story and meta declarations in `excludeNames` are skipped — a render referencing
+ * another story export is not a definition worth inlining.
+ */
+function collectModuleDeclarations(
+  programBody: t.Statement[],
+  excludeNames: ReadonlySet<string>
+): Map<string, t.Statement> {
+  const declarations = new Map<string, t.Statement>();
+
+  const register = (name: string, statement: t.Statement) => {
+    if (!excludeNames.has(name) && !declarations.has(name)) {
+      declarations.set(name, statement);
+    }
+  };
+
+  for (const stmt of programBody) {
+    // Unwrap `export const x = …` / `export function x() {}` to the underlying declaration so the
+    // inlined source reads as a plain definition rather than a re-export.
+    const declaration = t.isExportNamedDeclaration(stmt) && stmt.declaration ? stmt.declaration : stmt;
+
+    if (t.isVariableDeclaration(declaration)) {
+      for (const declarator of declaration.declarations) {
+        if (t.isIdentifier(declarator.id)) {
+          register(declarator.id.name, declaration);
+        }
+      }
+    } else if (
+      (t.isFunctionDeclaration(declaration) ||
+        t.isTSTypeAliasDeclaration(declaration) ||
+        t.isTSInterfaceDeclaration(declaration) ||
+        t.isClassDeclaration(declaration)) &&
+      declaration.id
+    ) {
+      register(declaration.id.name, declaration);
+    }
+  }
+
+  return declarations;
+}
+
+/**
+ * Generate a self-contained source snapshot of a story's `render` function: the verbatim render
+ * (its `components`/`setup`/`data`/`template` — not just the template string the {@link
+ * generateVueSnippet} path captures), preceded by the module-level declarations it references
+ * (`const columns = …`, helpers, local types), resolved transitively so the snippet is readable on
+ * its own.
+ *
+ * Returns `undefined` when the story has no `render` function (args-only stories, where the snippet
+ * already conveys everything).
+ */
+export function extractStorySource(
+  renderNode: t.Node | undefined,
+  programBody: t.Statement[],
+  excludeNames: ReadonlySet<string>
+): string | undefined {
+  if (
+    !renderNode ||
+    (!t.isArrowFunctionExpression(renderNode) && !t.isFunctionExpression(renderNode))
+  ) {
+    return undefined;
+  }
+
+  const declarations = collectModuleDeclarations(programBody, excludeNames);
+
+  // Transitively gather the declarations the render references (and the declarations those
+  // reference), so a snapshot that uses `columns` also carries the helper `columns` is built from.
+  const needed = new Set<string>();
+  const queue = [...collectReferencedNames(renderNode)];
+  while (queue.length > 0) {
+    const name = queue.pop();
+    if (name === undefined || needed.has(name) || !declarations.has(name)) {
+      continue;
+    }
+    needed.add(name);
+    for (const dep of collectReferencedNames(declarations.get(name)!)) {
+      if (!needed.has(dep)) {
+        queue.push(dep);
+      }
+    }
+  }
+
+  // Emit the needed declarations in their original program order, then the render itself. A
+  // multi-declarator `const a = …, b = …` maps several names to one statement — dedupe by node so
+  // it is printed once.
+  const orderedDeclarations: string[] = [];
+  const emitted = new Set<t.Statement>();
+  for (const [name, statement] of declarations) {
+    if (needed.has(name) && !emitted.has(statement)) {
+      emitted.add(statement);
+      orderedDeclarations.push(generate(statement).code);
+    }
+  }
+
+  const renderCode = `render: ${generate(renderNode).code}`;
+  return [...orderedDeclarations, renderCode].join('\n\n');
+}
+
 /** Classification of a single arg against the component's extracted meta. */
 type ArgKind = 'prop' | 'event' | 'slot';
 
