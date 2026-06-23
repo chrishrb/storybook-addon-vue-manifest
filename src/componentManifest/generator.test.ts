@@ -60,7 +60,23 @@ test('generates component manifest with snippets, import and description', async
   const button = result?.components?.components['example-button'];
   expect(button).toMatchInlineSnapshot(`
     {
-      "description": "Primary UI component for user interaction",
+      "description": "Primary UI component for user interaction
+
+    ## Events
+
+    \`\`\`
+    export type Events = {
+      click: undefined;
+    }
+    \`\`\`
+
+    ## Slots
+
+    \`\`\`
+    export type Slots = {
+      default: undefined;
+    }
+    \`\`\`",
       "id": "example-button",
       "import": "import Button from './Button.vue';",
       "jsDocTags": {
@@ -70,6 +86,44 @@ test('generates component manifest with snippets, import and description', async
       },
       "name": "Button",
       "path": "./src/stories/Button.stories.ts",
+      "reactComponentMeta": {
+        "props": {
+          "count": {
+            "defaultValue": undefined,
+            "description": undefined,
+            "required": false,
+            "type": {
+              "name": "undefined | number",
+            },
+          },
+          "icon": {
+            "defaultValue": undefined,
+            "description": "Optional leading icon",
+            "required": false,
+            "type": {
+              "name": "undefined | { name: string; size?: undefined | number }",
+            },
+          },
+          "label": {
+            "defaultValue": undefined,
+            "description": "The button label",
+            "required": true,
+            "type": {
+              "name": "string",
+            },
+          },
+          "primary": {
+            "defaultValue": {
+              "value": "false",
+            },
+            "description": "Use the primary visual style",
+            "required": false,
+            "type": {
+              "name": "undefined | false | true",
+            },
+          },
+        },
+      },
       "stories": [
         {
           "description": "The primary variant of the button",

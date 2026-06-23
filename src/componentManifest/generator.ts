@@ -45,6 +45,7 @@ import {
   refreshFileIfChanged,
 } from './vueComponentMetaDocgen.ts';
 import { extractJSDocInfo } from './jsdocTags.ts';
+import { buildStockDocgenFields, type ReactComponentMeta } from './projectDocgen.ts';
 import { cachedReadTextFileSync, invalidateCache, invariant } from './utils.ts';
 
 /** A manifest story entry as captured by this addon. */
@@ -54,6 +55,12 @@ export type VueStory = NonNullable<ComponentManifest['stories']>[number];
 export interface VueComponentManifest extends Omit<ComponentManifest, 'stories'> {
   stories: VueStory[];
   vueComponentMeta?: ComponentMeta;
+  /**
+   * Props projected into react-docgen shape so the stock `@storybook/mcp` server (which only reads
+   * React docgen fields and drops `vueComponentMeta` during validation) can render them. See
+   * {@link buildStockDocgenFields}.
+   */
+  reactComponentMeta?: ReactComponentMeta;
   /**
    * Component ids of the documented components whose stories reference this one. Present only on
    * entries synthesized for sub-components that have no story of their own (see
@@ -177,6 +184,11 @@ async function buildReferencedComponents(
     const storyPackageName = getPackageInfo(undefined, absoluteStoryPath);
     const componentPackageName = getPackageInfo(ref.absPath, absoluteStoryPath);
 
+    const { description, reactComponentMeta } = buildStockDocgenFields(
+      extracted.description,
+      extracted.meta
+    );
+
     entries.push({
       id,
       name: extracted.displayName || ref.localName,
@@ -184,11 +196,12 @@ async function buildReferencedComponents(
       path: path.relative(process.cwd(), ref.absPath),
       stories: [],
       import: buildComponentImport(ref, storyPackageName, componentPackageName, undefined),
-      description: extracted.description,
+      description,
       summary: extracted.jsDocTags?.summary?.[0],
       jsDocTags: extracted.jsDocTags ?? {},
       referencedBy: [...referencedBy].sort(),
       vueComponentMeta: extracted.meta,
+      reactComponentMeta,
     });
   }
 
@@ -367,16 +380,22 @@ export const manifests: PresetPropertyFn<
           ? buildComponentImport(ref, storyPackageName, componentPackageName, jsDocTags.import?.[0])
           : undefined;
 
+        const { description: docDescription, reactComponentMeta } = buildStockDocgenFields(
+          description,
+          componentMeta
+        );
+
         const base: VueComponentManifest = {
           id,
           name: componentName ?? title,
           path: storyFilePath,
           stories,
           import: importStatement,
-          description,
+          description: docDescription,
           summary,
           jsDocTags,
           vueComponentMeta: componentMeta,
+          reactComponentMeta,
         };
 
         if (resolved.error) {

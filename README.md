@@ -93,7 +93,10 @@ addons: [
         }
       ],
       // raw vue-component-meta data (props/events/slots/exposed, with resolved type schemas)
-      "vueComponentMeta": { "props": [/* ... */], "events": [/* ... */] }
+      "vueComponentMeta": { "props": [/* ... */], "events": [/* ... */] },
+      // props projected into react-docgen shape so the stock MCP server renders them as `## Props`
+      // (see "Works with the stock MCP server" below)
+      "reactComponentMeta": { "props": { /* ... */ } }
     },
     // sub-components referenced by a story but lacking a story of their own get their own entry,
     // tagged with the component ids that reference them (see "Referenced components" below)
@@ -110,6 +113,20 @@ addons: [
   "meta": { "docgen": "vue-component-meta", "durationMs": 875 }
 }
 ```
+
+### Works with the stock MCP server
+
+No fork or patch of [`@storybook/mcp`](https://github.com/storybookjs/mcp) is required. That server
+renders component APIs from React-shaped docgen fields and drops unknown manifest keys during
+validation, so a Vue-only `vueComponentMeta` field would never reach its formatter. To stay
+compatible with the **unmodified published server**, each entry also carries:
+
+- `reactComponentMeta` — props projected into the react-docgen shape the server reads, rendered as
+  its `## Props` section (enum/array/object schemas are expanded into TypeScript-like type strings).
+- the component `description` with the Vue-specific surface (events, slots, exposed) appended as
+  `## Events` / `## Slots` / `## Exposed` Markdown blocks, which the server renders verbatim.
+
+The raw `vueComponentMeta` is retained for clients that consume it directly.
 
 ### Story source
 
